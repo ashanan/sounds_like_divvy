@@ -10,15 +10,16 @@ from ride import Ride
 month_lengths = [0, 31, 60, 91, 121, 152, 182, 213, 244, 274, 305, 335]
 
 # FILE VARIABLES
-# csv_input = '../data/Divvy_Trips_2017_Q3Q4/Divvy_Trips_2017_Q3.csv'
-csv_input = '../data/Divvy_Trips_2017_Q3Q4/test.csv'
+csv_input = '../data/Divvy_Trips_2017_Q3Q4/Divvy_Trips_2017_Q3.csv'
+# csv_input = '../data/Divvy_Trips_2017_Q3Q4/test.csv'
 # csv_input = '../data/Divvy_Trips_2017_Q3Q4/q3_small.csv'
 midi_output = './midi_folder/divvy_by_date.mid'
 
 # TIME VARIABLES
-start_month = 9
-start_day = 30
-subtract_beat = month_lengths[(start_month-1)] + start_day 
+start_month = 7
+start_day = 1
+start_hour = 0
+subtract_beat = month_lengths[(start_month-1)] + start_day + start_hour
 sightings = {}
 past_day = 0
 
@@ -39,7 +40,9 @@ def get_note(val):
     minor_scale = [60, 62, 63, 65, 67, 68, 70]
     scale = major_scale
 
-    # TODO: make this based on geography in some way?
+    # TODO: This mapping is essentially 'random' and results in all notes at all beats.
+    #       Need to figure out a better mapping.  Divide the city into 8 section, North
+    #       to South and use that instead.
     return major_scale[val % 7]
 
 def save_midi(midi_file):
@@ -56,10 +59,17 @@ def check_for_voice(description):
 
 def parse_date(date):
     info = date.split(' ')[0].split('/')
+    # print(info)
     month = int(info[0])
     day = int(info[1])
-    beat = (month_lengths[(month-1)] + day) - subtract_beat
-    return [day, month, beat]
+    
+    time_sections = date.split(" ")[1].split(":")
+    hour = int(time_sections[0])
+    # print(time_sections)
+    # print(hour)
+    
+    beat = (month_lengths[(month-1)] + day + hour) - subtract_beat
+    return [day, month, hour, beat]
 
 def get_stats(rides, property):
     val_list = []
@@ -91,17 +101,17 @@ def compose_midi(rides, duration_stats):
     midi_file = midiutil.MIDIFile(1, deinterleave=False, adjust_origin=False)
     midi_file.addTempo(track, time, tempo)
     midi_file.addProgramChange(track, channel, time, program)
-    midi_file.addProgramChange(track, channel+1, time, 52)
+    midi_file.addProgramChange(track, channel+1, time, 112)
     for ride in rides:
-        time = parse_date(ride.start_time)[2]
+        time = parse_date(ride.start_time)[3]
         if time >= 0:
             duration = get_duration(ride.tripduration, duration_stats) # duration is in beats
             note = get_note(int(ride.from_station_id))
             midi_file.addNote(track, channel, note, time, duration, volume) 
-            # if check_for_voice(row[7]) == True:
-            #     midi_file.addNote(track, channel+1, note, time, 2, volume)
-            # else:
-            #     midi_file.addNote(track, channel, note, time, duration, volume)        
+            if ride.usertype == "Customer":
+                midi_file.addNote(track, channel+1, note, time, 2, volume)
+            else:
+                midi_file.addNote(track, channel, note, time, duration, volume)        
     save_midi(midi_file)
 
 def clean_date(date):
@@ -129,7 +139,7 @@ with open(csv_input, 'rt') as csvfile:
         all_rides.append(Ride(row))
     # print(all_rides)
     all_rides = clean_data(all_rides)
-    print(repr(all_rides))
+    # print(repr(all_rides))
     duration_stats = get_stats(all_rides, 'tripduration')
     print(duration_stats)
     compose_midi(all_rides, duration_stats)
