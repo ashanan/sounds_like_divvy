@@ -4,6 +4,8 @@ import midiutil
 import numpy
 from scipy import stats
 from datetime import datetime
+import http.client
+import urllib
 
 from ride import Ride
 
@@ -14,6 +16,9 @@ csv_input = '../data/Divvy_Trips_2017_Q3Q4/Divvy_Trips_2017_Q3.csv'
 # csv_input = '../data/Divvy_Trips_2017_Q3Q4/test.csv'
 # csv_input = '../data/Divvy_Trips_2017_Q3Q4/q3_small.csv'
 midi_output = './midi_folder/divvy_by_date.mid'
+
+stations_csv = '../data/Divvy_Bicycle_Stations_-_All_-_Map.csv'
+stations = []
 
 # TIME VARIABLES
 start_month = 7
@@ -35,15 +40,29 @@ def get_duration(val, duration_stats):
         duration = possible_beats[3]
     return duration
 
-def get_note(val):
-    major_scale = [60, 62, 64, 65, 67, 69, 71]
+def get_latitude(address):
+    if address in stations:
+        return stations[address]
+    return 0
+
+def get_note(station_name, station_stats):
+    major_scale = [60, 62, 64, 65, 67, 69, 71, 72, 74, 76, 77, 79, 81, 83]
     minor_scale = [60, 62, 63, 65, 67, 68, 70]
     scale = major_scale
 
     # TODO: This mapping is essentially 'random' and results in all notes at all beats.
-    #       Need to figure out a better mapping.  Divide the city into 8 section, North
-    #       to South and use that instead.
-    return major_scale[val % 7]
+    #       Need to figure out a better mapping.  Divide the city into 8 sections, North
+    #       to South and use that instead.  Maybe also do something with different scales for
+    #       from vs. to locations?  Or slide between those station notes?
+    
+    latitude = get_latitude(station_name)
+    for note_index in range(station_stats['divisions']):
+        low_bound = note_index * station_stats['step']
+        high_bound = low_bound + station_stats['step']
+        if low_bound <= latitude <= high_bound:
+            return major_scale[note_index]
+
+    return major_scale[0]
 
 def save_midi(midi_file):
     filename = midi_output
@@ -59,14 +78,11 @@ def check_for_voice(description):
 
 def parse_date(date):
     info = date.split(' ')[0].split('/')
-    # print(info)
     month = int(info[0])
     day = int(info[1])
     
     time_sections = date.split(" ")[1].split(":")
     hour = int(time_sections[0])
-    # print(time_sections)
-    # print(hour)
     
     beat = (month_lengths[(month-1)] + day + hour) - subtract_beat
     return [day, month, hour, beat]
@@ -91,7 +107,19 @@ def get_stats(rides, property):
         "stdev": stdev
     }
 
-def compose_midi(rides, duration_stats):
+def get_lat_stats(stations):
+    values = list(stations.values())
+    
+    divisions = 8
+    percentile_step = 100 / divisions
+    # return [numpy.percentile(values, i*percentile_step) for i in range(divisions)]
+    return {
+        'divisions': divisions,
+        'step': percentile_step,
+        'percentiles': numpy.percentile(values, [i*percentile_step for i in range(divisions)])
+    }
+
+def compose_midi(rides, duration_stats, station_stats):
     track = 0
     channel = 0
     time = 0 # in beats
@@ -106,7 +134,7 @@ def compose_midi(rides, duration_stats):
         time = parse_date(ride.start_time)[3]
         if time >= 0:
             duration = get_duration(ride.tripduration, duration_stats) # duration is in beats
-            note = get_note(int(ride.from_station_id))
+            note = get_note(ride.from_station_name, station_stats)
             midi_file.addNote(track, channel, note, time, duration, volume) 
             if ride.usertype == "Customer":
                 midi_file.addNote(track, channel+1, note, time, 2, volume)
@@ -127,7 +155,27 @@ def clean_data(rides):
     data = sorted(rides, key = lambda ride: datetime.strptime(clean_date(ride.start_time), "%m/%d/%Y"))
     return data
 
+def get_stations(stations_csv):
+    stations = {}
+    with open(stations_csv, 'rt') as csvfile:
+        reader = csv.reader(csvfile, quotechar='"')
+        skip = True
+        for row in reader:
+            if skip:
+                skip = False
+                continue
+                
+            stations[row[1]] = float(row[6])
+
+    return stations
+
+
 with open(csv_input, 'rt') as csvfile:
+
+    stations = get_stations(stations_csv)
+    station_stats = get_lat_stats(stations)
+    print(station_stats)
+
     reader = csv.reader(csvfile, quotechar='"')
     all_rides = []
     skip = True
@@ -137,9 +185,7 @@ with open(csv_input, 'rt') as csvfile:
             continue
             
         all_rides.append(Ride(row))
-    # print(all_rides)
     all_rides = clean_data(all_rides)
-    # print(repr(all_rides))
     duration_stats = get_stats(all_rides, 'tripduration')
     print(duration_stats)
-    compose_midi(all_rides, duration_stats)
+    compose_midi(all_rides, duration_stats, station_stats)
