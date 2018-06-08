@@ -4,8 +4,6 @@ import midiutil
 import numpy
 from scipy import stats
 from datetime import datetime
-import http.client
-import urllib
 
 from ride import Ride
 
@@ -46,22 +44,20 @@ def get_latitude(address):
     return 0
 
 def get_note(station_name, station_stats):
-    major_scale = [60, 62, 64, 65, 67, 69, 71, 72, 74, 76, 77, 79, 81, 83]
+    base_octave_major = [60, 62, 64, 65, 67, 69, 71]
+    major_scale = base_octave_major + [note + 12 for note in base_octave_major] + [note + 24 for note in base_octave_major]
     minor_scale = [60, 62, 63, 65, 67, 68, 70]
     scale = major_scale
-
-    # TODO: This mapping is essentially 'random' and results in all notes at all beats.
-    #       Need to figure out a better mapping.  Divide the city into 8 sections, North
-    #       to South and use that instead.  Maybe also do something with different scales for
-    #       from vs. to locations?  Or slide between those station notes?
-    
+    print(scale)
     latitude = get_latitude(station_name)
     for note_index in range(station_stats['divisions']):
-        low_bound = note_index * station_stats['step']
+        low_bound = station_stats['percentiles'][0] + note_index * station_stats['step']
         high_bound = low_bound + station_stats['step']
         if low_bound <= latitude <= high_bound:
+            print(low_bound, latitude, high_bound, note_index)
+            print(major_scale[note_index])
             return major_scale[note_index]
-
+    print('not found - 60')
     return major_scale[0]
 
 def save_midi(midi_file):
@@ -110,13 +106,14 @@ def get_stats(rides, property):
 def get_lat_stats(stations):
     values = list(stations.values())
     
-    divisions = 8
+    divisions = 21
     percentile_step = 100 / divisions
-    # return [numpy.percentile(values, i*percentile_step) for i in range(divisions)]
+    percentiles = numpy.percentile(values, [i*percentile_step for i in range(divisions)])
+
     return {
         'divisions': divisions,
-        'step': percentile_step,
-        'percentiles': numpy.percentile(values, [i*percentile_step for i in range(divisions)])
+        'step': (percentiles[-1] - percentiles[0])/float(divisions),
+        'percentiles': percentiles
     }
 
 def compose_midi(rides, duration_stats, station_stats):
@@ -134,7 +131,7 @@ def compose_midi(rides, duration_stats, station_stats):
         time = parse_date(ride.start_time)[3]
         if time >= 0:
             duration = get_duration(ride.tripduration, duration_stats) # duration is in beats
-            note = get_note(ride.from_station_name, station_stats)
+            note = get_note(ride.to_station_name, station_stats)
             midi_file.addNote(track, channel, note, time, duration, volume) 
             if ride.usertype == "Customer":
                 midi_file.addNote(track, channel+1, note, time, 2, volume)
